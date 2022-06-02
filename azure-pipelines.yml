@@ -4,16 +4,94 @@
 # https://aka.ms/yaml
 
 trigger:
-- main
+  - main
 
 pool:
-  vmImage: ubuntu-latest
+  vmImage: 'ubuntu-latest'
 
+variables:
+  kubernetesConnection: 'platform-demos-apis-ns'
+  platformUrl: 'https://demolabs.42crunch.cloud'
+  azureResourceGroup: Demos
+  namespace: apis
+  API_UUID: 8b6c7fe2-2151-45ee-a448-0b5e9c505f76
+  #protectionsConnection: 'ProtectionsRepoConnection'
+
+# resources:
+#  repositories:
+#    - repository: protections
+#      type: github
+#      endpoint: $(protectionsConnection)
+#      name: 42c-presales/policies
+  
 steps:
-- script: echo Hello, world!
-  displayName: 'Run a one-line script'
+# - checkout: self
+# - checkout: protections
+- task: NodeTool@0
+  displayName: Use Node 12 or higher
+  inputs:
+    versionSpec: '=12.0.0'
 
-- script: |
-    echo Add other tasks to build, test, and deploy your project.
-    echo See https://aka.ms/yaml
-  displayName: 'Run a multi-line script'
+- task: APIContractSecurityAudit@3
+  displayName: Auditing OAS Files
+  inputs:
+    apiToken: '$(42C_API_TOKEN)'
+    minScore: '75'
+    platformUrl: '$(platformUrl)'
+    logLevel: DEBUG
+    defaultCollectionName: 'Dyn APIs'
+
+- task: 42CrunchConformanceService@1
+  displayName: Launching Conformance Scan
+  inputs:
+    job_name: '$(Build.BuildId)'
+    api_id: $(API_UUID)
+    scan_manager_url: "http://scan-42c.westeurope.cloudapp.azure.com"
+    platform_url: demolabs.42crunch.cloud
+    scan_image: "42crunch/scand-agent:v1.18.0"
+    job_expiration_time: 3600
+  env:
+    SCAN_TOKEN: $(PIXI_SCAN_TOKEN)
+
+- task: 42CrunchSecurityAsCode@1
+  displayName: Inject Protection Policies  
+  inputs:
+    api_id: '$(API_UUID)'
+    platform_url: '$(platformUrl)'
+    sec_headers: true
+    global_rate_limiting: true
+  env:
+    API_KEY: $(42C_API_TOKEN)
+
+- task: 42CrunchUpdateProtectionService@1
+  displayName: Updating Pixi Deployment
+  inputs:
+    api_id: $(API_UUID)
+    platform_url: '$(platformUrl)'
+  env:
+    API_KEY: $(42C_API_TOKEN)
+
+- task: HelmDeploy@0
+  displayName: "Deploy Firewall prerequisites"
+  inputs:
+    connectionType: 'Kubernetes Service Connection'
+    kubernetesServiceConnection: '$(kubernetesConnection)'
+    namespace: '$(namespace)'
+    command: 'upgrade'
+    chartType: 'FilePath'
+    chartPath: './42c-firewall'
+    releaseName: '$(FW_RELEASE_NAME)'
+    overrideValues: 'apifirewall.protection_token=$(PROTECTION_TOKEN)'
+    
+- task: HelmDeploy@0
+  displayName: "Inject Firewall into API Deployment"
+  inputs:
+    connectionType: 'Kubernetes Service Connection'
+    kubernetesServiceConnection:  '$(kubernetesConnection)'
+    namespace: '$(namespace)'
+    command: 'upgrade'
+    chartType: 'FilePath'
+    chartPath: './42c-pixiapi'
+    releaseName: '$(PIXI_RELEASE_NAME)'
+    overrideValues: 'pixiapp.inject_firewall=true,pixiapp.pod_listen_port=8080'
+

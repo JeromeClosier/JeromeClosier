@@ -94,4 +94,3 @@ steps:
     chartPath: './42c-pixiapi'
     releaseName: '$(PIXI_RELEASE_NAME)'
     overrideValues: 'pixiapp.inject_firewall=true,pixiapp.pod_listen_port=8080'
-
